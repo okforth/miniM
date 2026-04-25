@@ -51,6 +51,7 @@ int file_open_error_flag = 0;
 int overtype_mode = 0;
 int input_mode_change_flag = 0; //typing mode (insert/overtype) change information flag
 int has_line_changed = 0; // Checks in case currently pointed at text line changed.
+int return_to_editor_screen = 0; // Checks if user returned to editor from different prompt/screen (because it needs additional refresh then).
 
 //TO DO:
 // then switch to gap buffer or piece table
@@ -220,6 +221,7 @@ int open_new_file_logic(char curr_path[], char ***text_lines, int *line_number, 
     }
 
     printf(FULL_SCREEN_REFRESH);
+    return_to_editor_screen = 1;
 
     return 0;
 }
@@ -286,6 +288,7 @@ int open_file_logic(char curr_path[], char ***text_lines, int *line_number, int 
     if (fd < 0) {
         perror("open");
         file_open_error_flag = 1;
+        return_to_editor_screen = 1;
         return -1;
     }
 
@@ -340,6 +343,7 @@ int open_file_logic(char curr_path[], char ***text_lines, int *line_number, int 
 
     close(fd);
     file_opened_flag = 1;
+    return_to_editor_screen = 1;
 
     printf(FULL_SCREEN_REFRESH);
 
@@ -396,6 +400,7 @@ int save_file_logic(char curr_path[], const char ***text_lines, int *line_number
 
     close(fd);
     file_saved_flag = 1;
+    return_to_editor_screen = 1;
 
     printf(FULL_SCREEN_REFRESH);
 
@@ -630,7 +635,7 @@ int print_logic(struct winsize *ws, char curr_path[], char **text_lines, int lin
             screen_scrolled = 1;
         }
         
-        if(screen_scrolled || has_line_changed){
+        if(screen_scrolled || has_line_changed || return_to_editor_screen){
 
             printf(REFRESH_ABOVE_STATUS_BAR);
 
@@ -641,6 +646,7 @@ int print_logic(struct winsize *ws, char curr_path[], char **text_lines, int lin
                 printf("%s\r\n", text_lines[i]);
 
             screen_scrolled = 0;
+            return_to_editor_screen = 0;
 
         }else{
             printf("\e[%d;1H", line_number - *upper_screen_bond + 1);
