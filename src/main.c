@@ -31,11 +31,11 @@ int tty_fd;
 #define SAVE_CURSOR_POS "\e7"
 #define RESTORE_CURSOR_POS "\e8"
 //                           "---\r\nCTRL+S to save to the file | CTRL+O to open a file | CTRL+N to open new file | CTRL+Q to exit the program"
-#define STATUS_BAR_TEXT_LONG "---\r\n\e[1m\e[3mCTRL+S\e[0m to save to the file | \e[1m\e[3mCTRL+O\e[0m to open a file | \e[1m\e[3mCTRL+N\e[0m to open new file | \e[1m\e[3mCTRL+Q\e[0m to exit the program"
+#define STATUS_BAR_TEXT_LONG "---\r\n\e[1m\e[3mCTRL+S\e[0m to save to the file | \e[1m\e[3mCTRL+O\e[0m to open a file | \e[1m\e[3mCTRL+N\e[0m to open new file | \e[1m\e[3mCTRL+Q\e[0m to exit the program | \e[1m\e[3mCTRL+I\e[0m to change input mode"
 //                      "---\r\nCTRL+S to save | CTRL+O to open file | CTRL+N to open new | CTRL+Q to exit"
-#define STATUS_BAR_TEXT "---\r\n\e[1m\e[3mCTRL+S\e[0m to save | \e[1m\e[3mCTRL+O\e[0m to open file | \e[1m\e[3mCTRL+N\e[0m to open new | \e[1m\e[3mCTRL+Q\e[0m to exit"
+#define STATUS_BAR_TEXT "---\r\n\e[1m\e[3mCTRL+S\e[0m to save | \e[1m\e[3mCTRL+O\e[0m to open file | \e[1m\e[3mCTRL+N\e[0m to open new | \e[1m\e[3mCTRL+Q\e[0m to exit | \e[1m\e[3mCTRL+I\e[0m to change mode"
 //                            "---\r\nCTRL+S save | CTRL+O open | CTRL+N new | CTRL+Q exit"
-#define STATUS_BAR_TEXT_SHORT "---\r\n\e[1m\e[3mCTRL+S\e[0m save | \e[1m\e[3mCTRL+O\e[0m open | \e[1m\e[3mCTRL+N\e[0m new | \e[1m\e[3mCTRL+Q\e[0m exit" // Prints help/"tutorial" info on the bottom status bar
+#define STATUS_BAR_TEXT_SHORT "---\r\n\e[1m\e[3mCTRL+S\e[0m save | \e[1m\e[3mCTRL+O\e[0m open | \e[1m\e[3mCTRL+N\e[0m new | \e[1m\e[3mCTRL+Q\e[0m exit | \e[1m\e[3mCTRL+I\e[0m mode" // Prints help/"tutorial" info on the bottom status bar
 
 int key_handling(char curr_path[], char c, char prev_c, int *is_CSI, char ***text_lines, int *line_number, int *char_number, int *line_count, int **allocated_char_counts, int **actual_char_counts, int lite_mode_flag);
 
@@ -48,6 +48,8 @@ int free_text_mem(char **text_lines, int *allocated_char_counts, int *actual_cha
 int file_opened_flag = 0;
 int file_saved_flag = 0;
 int file_open_error_flag = 0;
+int overtype_mode_flag = 0;
+int input_mode_change_flag = 0; //typing mode (insert/overtype) change information flag
 
 //TO DO:
 // then switch to gap buffer or piece table
@@ -466,6 +468,12 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_CSI, char ***tex
 
         return 0;
 
+    }else if(c == 9){ // CTRL + I (changes between insert and overtype modes)
+
+        overtype_mode_flag = overtype_mode_flag ^ 1;
+        input_mode_change_flag = 1;
+        return 0;
+
     }else if(c == 91 /*[*/ && prev_c == 27 /*ESC*/){ // Checking for CSI (Control Sequence Introducer)
 
         *is_CSI = 1;
@@ -525,9 +533,16 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_CSI, char ***tex
         return 0;
     }
 
-    (*text_lines)[*line_number][*char_number] = c;
+    if(!overtype_mode_flag){
+        (*actual_char_counts)[*line_number] += 1;
+        for(int i = (*actual_char_counts)[*line_number]; i > *char_number; i--){
+            (*text_lines)[*line_number][i] = (*text_lines)[*line_number][i-1];
+        }
+    }
+    (*text_lines)[*line_number][*char_number] = c; // assigning new char
 
-    if(*char_number >= (*allocated_char_counts)[*line_number] - 1){// Safety measurements
+    //We need to do both!!! Increase size (add more chars) and change the value for it
+    if((*actual_char_counts)[*line_number] >= (*allocated_char_counts)[*line_number] - 1){// Safety measurements
         char *extended_char_line = realloc((*text_lines)[*line_number], (*allocated_char_counts)[*line_number] * 2 * sizeof(char));
         //nullify the new chars
         if (extended_char_line == NULL){ // Safety measurements
@@ -545,7 +560,7 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_CSI, char ***tex
     }
     
     *char_number += 1;
-    if(*char_number > (*actual_char_counts)[*line_number])
+    if(*char_number > (*actual_char_counts)[*line_number] && overtype_mode_flag)
         (*actual_char_counts)[*line_number] += 1;
     
 
@@ -579,12 +594,19 @@ int print_logic(struct winsize *ws, char curr_path[], char **text_lines, int lin
             file_opened_flag = 0;
             
         }else if(file_open_error_flag){
+
             printf("---\r\nFile \"%s\" not found or unable to open!", curr_path);
             file_open_error_flag = 0;
+
+        }else if(input_mode_change_flag){
+            
+            printf("---\r\nTyping mode changed");
+            input_mode_change_flag = 0;
+
         }else{
-            if(ws->ws_col >= strlen(STATUS_BAR_TEXT_LONG) - 12*4) //12 is the number of special characters used for formatting (invis) all the "CTRL+" commands
+            if(ws->ws_col >= strlen(STATUS_BAR_TEXT_LONG) - 12*5) //12 is the number of special characters used for formatting (invis) all the "CTRL+" commands
                 printf(STATUS_BAR_TEXT_LONG);
-            else if(ws->ws_col >= strlen(STATUS_BAR_TEXT) - 12*4)
+            else if(ws->ws_col >= strlen(STATUS_BAR_TEXT) - 12*5)
                 printf(STATUS_BAR_TEXT);
             else
                 printf(STATUS_BAR_TEXT_SHORT);
