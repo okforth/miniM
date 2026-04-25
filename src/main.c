@@ -24,6 +24,9 @@ int tty_fd;
 #define CURSOR_JUMP_1_LINE_UP "\e[1A"
 #define CURSOR_MOVE_1_COL_LEFT "\e[1D"
 #define REFRESH_ENTIRE_LINE "\e[2K"
+#define REFRESH_TIL_LINE_END "\e[0K" // Erases from cursor to end of line.
+#define HIDE_CURSOR "\e[?25l"
+#define SHOW_CURSOR "\e[?25h"
 //#define CURSOR_MOVE_BEG_OF_LINE "\e[E\e[F"
 #define SAVE_CURSOR_POS "\e7"
 #define RESTORE_CURSOR_POS "\e8"
@@ -34,7 +37,7 @@ int tty_fd;
 //                            "---\r\nCTRL+S save | CTRL+O open | CTRL+N new | CTRL+Q exit"
 #define STATUS_BAR_TEXT_SHORT "---\r\n\e[1m\e[3mCTRL+S\e[0m save | \e[1m\e[3mCTRL+O\e[0m open | \e[1m\e[3mCTRL+N\e[0m new | \e[1m\e[3mCTRL+Q\e[0m exit | \e[1m\e[3mCTRL+I\e[0m mode" // Prints help/"tutorial" info on the bottom status bar
 
-int key_handling(char curr_path[], char c, char prev_c, int *is_arrow_key, char ***text_lines, int *line_number, int *char_number, int *line_count, int **allocated_char_counts, int **actual_char_counts, int lite_mode_flag);
+int key_handling(char curr_path[], char c, char prev_c, int *is_CSI, char ***text_lines, int *line_number, int *char_number, int *line_count, int **allocated_char_counts, int **actual_char_counts, int lite_mode_flag);
 
 int open_new_file_logic(char curr_path[], char ***text_lines, int *line_number, int *char_number, int *line_count, int **allocated_char_counts, int **actual_char_counts);
 int open_file_logic(char curr_path[], char ***text_lines, int *line_number, int *char_number, int *line_count, int **allocated_char_counts, int **actual_char_counts);
@@ -49,7 +52,7 @@ int overtype_mode_flag = 0;
 int input_mode_change_flag = 0; //typing mode (insert/overtype) change information flag
 
 //TO DO:
-//  Probably first switch to array of lines and then to gap buffer or piece table
+// then switch to gap buffer or piece table
 
 void disable_raw_mode() {
     if (tcsetattr(tty_fd, TCSAFLUSH, &original_termios) == -1) {
@@ -153,7 +156,7 @@ int input_file_name_logic(char curr_path[]){
 
     char c;
     char prev_c = '\0';
-    int is_arrow_key = 0;
+    int is_CSI = 0;
     int temp_char_number = 0;
     int temp_line_number = 0;
     int temp_line_count = 1;
@@ -166,14 +169,14 @@ int input_file_name_logic(char curr_path[]){
     printf(SAVE_CURSOR_POS);
     while(1){
         if (read(tty_fd, &c, 1) == 1) {
-            key_handling(curr_path, c, prev_c, &is_arrow_key, &new_path, &temp_line_number, &temp_char_number, &temp_line_count, &temp_allocated_char_counts, &temp_actual_char_count, 1);
+            key_handling(curr_path, c, prev_c, &is_CSI, &new_path, &temp_line_number, &temp_char_number, &temp_line_count, &temp_allocated_char_counts, &temp_actual_char_count, 1);
             prev_c = c;
             printf(REFRESH_ENTIRE_LINE); // Can make it more effecting by refreshing only part of the line later.
             printf(RESTORE_CURSOR_POS);
             printf("%s", *new_path); // printing currently written path name's text
             if(c == 13 /*CR*/){ // if enter (return) is pressed stop waiting for more characters and accept the given file name
                 curr_path[*temp_allocated_char_counts-1] = '\0'; //getting rid of CR character at the end of file name.
-                break; // Put it in key_handling function with flag included later.
+                break;
             }
         }
     }
@@ -375,7 +378,7 @@ int file_logic(){
 }
 
 //                                                 lite mode is used for key handling in options like: setting file name to save it etc. text areas v 
-int key_handling(char curr_path[], char c, char prev_c, int *is_arrow_key, char ***text_lines, int *line_number, int *char_number, int *line_count, int **allocated_char_counts, int **actual_char_counts, int lite_mode_flag){
+int key_handling(char curr_path[], char c, char prev_c, int *is_CSI, char ***text_lines, int *line_number, int *char_number, int *line_count, int **allocated_char_counts, int **actual_char_counts, int lite_mode_flag){
 
     if(lite_mode_flag == 0){ //if lite mode isn't present handle all the special characters as well.
 
@@ -398,7 +401,7 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_arrow_key, char 
             open_new_file_logic(curr_path, text_lines, line_number, char_number, line_count, allocated_char_counts, actual_char_counts);
             return 0;
 
-        }else if (c == 13 /*CR*/) { // <- "return" handling
+        }else if (c == 13 /*CR*/) { // "return" handling
 
             // Adding (allocating more) lines to text_lines line array in case it's needed.
             if(*line_number >= (*line_count)-1){// Safety measurements
@@ -418,7 +421,7 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_arrow_key, char 
                     *allocated_char_counts = extended_allocated_char_counts;
                     *actual_char_counts = extended_actual_char_counts;
                     for(int i = *line_count; i < *line_count * 2; i++){
-                        *(*text_lines+i) = calloc(STARTING_LINE_LEN, sizeof(char)); // Each line 128 characters by default.
+                        *(*text_lines+i) = calloc(STARTING_LINE_LEN, sizeof(char));
                         *(*allocated_char_counts+i) = STARTING_LINE_LEN;
                         *(*actual_char_counts+i) = 0;
                     }
@@ -472,14 +475,14 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_arrow_key, char 
         input_mode_change_flag = 1;
         return 0;
 
-    }else if(c == 91 /*[*/ && prev_c == 27 /*ESC*/){ // Arrow Keys
+    }else if(c == 91 /*[*/ && prev_c == 27 /*ESC*/){ // Checking for CSI (Control Sequence Introducer)
 
-        *is_arrow_key = 1;
+        *is_CSI = 1;
         return 0;
 
-    }else if(*is_arrow_key){// Arrow keys
+    }else if(*is_CSI){
 
-        switch(c){
+        switch(c){ // Arrow keys
             case 65 /*A*/: // Arrow Up
                 if(*line_number <= 0){
                     ;
@@ -524,7 +527,7 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_arrow_key, char 
                 break;
         }
 
-        *is_arrow_key = 0;
+        *is_CSI = 0;
         return 0;
 
     }else if(c < 32){ // Skipping other undefined non-printable characters
@@ -565,18 +568,20 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_arrow_key, char 
     return 0;
 }
 
-int print_logic(struct winsize *ws, char curr_path[], char **text_lines, int line_number, int char_number, int* upper_screen_bond, int line_count){ // The editor's main printing/render logic
+int print_logic(struct winsize *ws, char curr_path[], char **text_lines, int line_number, int char_number, int* upper_screen_bond, int line_count, int *actual_char_counts){ // The editor's main printing/render logic
 
     if(window_resized == 1){
         get_window_size(ws);
-        if(DEBUG_MODE) printf("Window size has changed!\r\n");
-        window_resized = 0;
+        if(DEBUG_MODE){
+            printf("Window size has changed!\r\n");
+            window_resized = 0;
+        }
     }
 
     if(DEBUG_MODE){}
     else{
         
-        printf(FULL_SCREEN_REFRESH); //! Temporary solution
+        printf(HIDE_CURSOR);
         //Place cursor on the second to last line of terminal screen (bottom status bar). (change to macro function later?)
         printf("\e[%d;1;H", ws->ws_row-1);
         if(file_saved_flag){
@@ -606,28 +611,54 @@ int print_logic(struct winsize *ws, char curr_path[], char **text_lines, int lin
                 printf(STATUS_BAR_TEXT);
             else
                 printf(STATUS_BAR_TEXT_SHORT);
+
+            window_resized = 0; //Temporarily here (solution for optimization)
         }
 
-        printf(REFRESH_ABOVE_STATUS_BAR);
+        // Checks if screen has scrolled and if yes, refreshes whole editor's text space and prints whole text again
+        int screen_scrolled = 0; 
 
         //Printing proper editor's main text:
         if(*upper_screen_bond == line_number){
-            if(line_number != 0)
+            if(line_number != 0){
                 *upper_screen_bond -= 1;
+                screen_scrolled = 1;
+            }
         }else if(line_number-*upper_screen_bond > ws->ws_row-3){
             *upper_screen_bond += 1;
+            screen_scrolled = 1;
         }
-        //change it to: lower bond and *upper* bond of the screen
-        int limit = line_count - *upper_screen_bond;
-        if(limit > ws->ws_row-2)
-            limit = ws->ws_row-2;
-        for(int i = *upper_screen_bond; i < *upper_screen_bond+limit; i++)
-            printf("%s\r\n", text_lines[i]);
+        
+        if(screen_scrolled){
+
+            printf(REFRESH_ABOVE_STATUS_BAR);
+
+            int limit = line_count - *upper_screen_bond;
+            if(limit > ws->ws_row-2)
+                limit = ws->ws_row-2;
+            for(int i = *upper_screen_bond; i < *upper_screen_bond+limit; i++)
+                printf("%s\r\n", text_lines[i]);
+
+            screen_scrolled = 0;
+
+        }else{
+            printf("\e[%d;1H", line_number - *upper_screen_bond + 1);
+            printf(REFRESH_ENTIRE_LINE);
+            printf("%s", text_lines[line_number]);
+            //v Make it work later !
+            /*printf("\e[%d;%dH", line_number - *upper_screen_bond + 1, char_number + 1);
+            printf(REFRESH_TIL_LINE_END);
+            for(int i = char_number; i < actual_char_counts[line_number]; i++){
+                putchar(text_lines[line_number][i]);
+            }*/
+        }
 
         // Place cursor at appropriate line/column
         //printf("\e[%d;%dH", line_number + 1, char_number + 1); // Name or macro it in more sensible way later
         // More relative/dynamic version of the above:
         printf("\e[%d;%dH", line_number - *upper_screen_bond + 1, char_number + 1);
+
+        printf(SHOW_CURSOR);
     }
 }
 
@@ -689,13 +720,14 @@ int main(void) {
 
     char c;
     char prev_c = '\0'; // Stores previous character in order to check for escape sequences.
-    int is_arrow_key = 0;
+    int is_CSI = 0; // is Control Sequence Introducer (ANSI)
+    //Is true (1), when control sequence introducer was present i.e: characters: '\e' followed by: '[' and then control sequence.
 
     int upper_screen_bond = 0; // First (upper-most) line that is visible on the editor's screen/window.
 
     while (1) {
 
-        print_logic(ws, curr_path, text_lines, curr_line_num, curr_char_num, &upper_screen_bond, line_count);
+        print_logic(ws, curr_path, text_lines, curr_line_num, curr_char_num, &upper_screen_bond, line_count, actual_char_counts);
 
         if (read(tty_fd, &c, 1) == 1) {
 
@@ -708,7 +740,7 @@ int main(void) {
 
             }else{
 
-                if(key_handling(curr_path, c, prev_c, &is_arrow_key, &text_lines, &curr_line_num, &curr_char_num, &line_count, &allocated_char_counts, &actual_char_counts, 0) == -1) // Normally doesn't return -1, so if that's the case then:
+                if(key_handling(curr_path, c, prev_c, &is_CSI, &text_lines, &curr_line_num, &curr_char_num, &line_count, &allocated_char_counts, &actual_char_counts, 0) == -1) // Normally doesn't return -1, so if that's the case then:
                     break; //Exits the program
                 
                 prev_c = c;
