@@ -460,17 +460,23 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_CSI, char ***tex
     if (c == 127 /*DEL*/) { // <- DEL ("backspace") handling
 
         if(*char_number < (*actual_char_counts)[*line_number]){
-            for(int i = *char_number; i < (*actual_char_counts)[*line_number] - 1; i++){
+		// DELETE CHARACTER LEFT-SIDE OF CURSOR
+            for(int i = *char_number - 1; i < (*actual_char_counts)[*line_number] - 1; i++){
                 (*text_lines)[*line_number][i] = (*text_lines)[*line_number][i+1];
             }
 
             (*actual_char_counts)[*line_number] -= 1;
             (*text_lines)[*line_number][(*actual_char_counts)[*line_number]] = '\0';
 
+		// UPDATE CURSOR POSITION AFTER BACKSPACE
+                if (*char_number > 0) {
+                    *char_number -= 1;
+                }
+
             return 0;
         }
 
-        (*text_lines)[*line_number][*char_number] = '\0';
+        (*text_lines)[*line_number][*char_number - 1] = '\0';
 
         if(*char_number == 0 && *line_number > 0){
             *line_number -= 1;
@@ -528,7 +534,8 @@ int key_handling(char curr_path[], char c, char prev_c, int *is_CSI, char ***tex
                 }
                 break;
             case 67 /*C*/: // Arrow Right
-                if(*char_number + 1 >= (*allocated_char_counts)[*line_number] || (*text_lines)[*line_number][*char_number + 1] == '\0'){
+		// ALLOW FOR CURSOR TO BE AT THE END OF FILE
+                if(*char_number + 1 >= (*allocated_char_counts)[*line_number] || (*text_lines)[*line_number][*char_number] == '\0'){
                     ;
                 }else{
                     *char_number += 1;
