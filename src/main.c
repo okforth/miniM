@@ -49,9 +49,6 @@ int input_mode_change_flag = 0; //typing mode (insert/overtype) change informati
 int has_line_changed = 0; // Checks in case currently pointed at text line changed.
 int return_to_editor_screen = 0; // Checks if user returned to editor from different prompt/screen (because it needs additional refresh then).
 
-//TO DO:
-// then switch to gap buffer or piece table
-
 void disable_raw_mode() {
     if (tcsetattr(tty_fd, TCSAFLUSH, &original_termios) == -1) {
         perror("tcsetattr restore");
@@ -108,7 +105,7 @@ void handle_sigwinch(int signo) { // i.e: handle a SIGnal of WINdow CHange
 int get_window_size(struct winsize *ws) {
 
 
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, ws) == -1 || ws->ws_col == 0) {
+    if (ioctl(tty_fd, TIOCGWINSZ, ws) == -1 || ws->ws_col == 0) {
         return -1; //error
     }
 
@@ -259,7 +256,7 @@ int grow_curr_line_len(struct editor_state *e){
 
     int new_size_count = e->allocated_char_counts[e->line_number] * 2;
 
-    char *extended_line_size = realloc(e->text_lines[e->line_number], new_size_count);
+    char *extended_line_size = realloc(e->text_lines[e->line_number], new_size_count * sizeof(char));
     if (extended_line_size == NULL) {
         perror("realloc for growing line length!");
         exit(1);
@@ -405,11 +402,6 @@ int save_file_logic(struct editor_state *e){
     return 0;
 }
 
-
-/*int file_logic(){
-
-}*/
-
 //                                                  v lite mode is used for key handling in options like: setting file name to save it etc. text areas 
 int key_handling(struct editor_state *e, int lite_mode_flag){
 
@@ -458,7 +450,8 @@ int key_handling(struct editor_state *e, int lite_mode_flag){
     if (e->c == 127 /*DEL*/) { // <- DEL ("backspace") handling
 
         if(e->char_number < e->actual_char_counts[e->line_number]){
-		// DELETE CHARACTER LEFT-SIDE OF CURSOR
+
+		    // DELETE CHARACTER LEFT-SIDE OF CURSOR
             for(int i = e->char_number - 1; i < e->actual_char_counts[e->line_number] - 1; i++){
                 e->text_lines[e->line_number][i] = e->text_lines[e->line_number][i+1];
             }
@@ -466,10 +459,10 @@ int key_handling(struct editor_state *e, int lite_mode_flag){
             e->actual_char_counts[e->line_number] -= 1;
             e->text_lines[e->line_number][e->actual_char_counts[e->line_number]] = '\0';
 
-		// UPDATE CURSOR POSITION AFTER BACKSPACE
-                if (e->char_number > 0) {
-                    e->char_number -= 1;
-                }
+            // UPDATE CURSOR POSITION AFTER BACKSPACE
+            if (e->char_number > 0) {
+                e->char_number -= 1;
+            }
 
             return 0;
         }
@@ -593,8 +586,8 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
     else{
         
         printf(HIDE_CURSOR);
-        //Place cursor on the second to last line of terminal screen (bottom status bar). (change to macro function later?)
-        printf("\e[%d;1;H", ws->ws_row-1);
+        //Place cursor on the second to last line of terminal screen (status bar).
+        CURSOR_MOVE_ROW(ws->ws_row-1);
         if(file_saved_flag){
 
             printf("---\r\nFile \"%s\" saved successfully!", e->curr_path);
@@ -729,35 +722,22 @@ int main(void) {
 
     struct editor_state *e = malloc(sizeof(struct editor_state));
 
-    /*int line_count = STARTING_TEXT_LINES;
-    int curr_line_num = 0;
-    int curr_char_num = 0; */
     e->line_count = STARTING_TEXT_LINES;
     e->line_number = 0;
     e->char_number = 0;
 
-    /*char **text_lines;
-    int *allocated_char_counts; // dynamic table of memory allocated for number of space allocated for characters in text lines.
-    int *actual_char_counts; // dynamic table of memory allocated for actual number of characters in text lines.*/
-
     alloc_mem_for_text(e);
 
-    //char curr_path[MAX_PATH_LEN] = ""; // Current file path
     e->curr_path[0] = '\0';
     setbuf(stdout, NULL);
     struct winsize *ws = malloc(sizeof(struct winsize));
     get_window_size(ws);
 
-    /*char c;
-    char prev_c = '\0'; // Stores previous character in order to check for escape sequences.
-    int is_CSI = 0; // is Control Sequence Introducer (ANSI)*/
-    //Is true (1), when control sequence introducer was present i.e: characters: '\e' followed by: '[' and then control sequence.
-
     e->prev_c = '\0'; // Stores previous character in order to check for escape sequences.
     e->is_CSI = 0; // is Control Sequence Introducer (ANSI)
     //Is true (1), when control sequence introducer was present i.e: characters: '\e' followed by: '[' and then control sequence.
-
-    //int upper_screen_bond = 0; // First (upper-most) line that is visible on the editor's screen/window.
+    
+    // First (upper-most) line that is visible on the editor's screen/window.
     e->upper_screen_bond = 0;
 
     while (1) {

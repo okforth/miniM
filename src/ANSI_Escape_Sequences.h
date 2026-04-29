@@ -14,6 +14,7 @@
 #define SHOW_CURSOR "\e[?25h"
 #define SAVE_CURSOR_POS "\e7"
 #define RESTORE_CURSOR_POS "\e8"
+#define CURSOR_MOVE_ROW(row) printf("\e[%d;1H", (row))
 
 // Defines below print help/"tutorial" info on the status bar (bottom of the screen)
 
