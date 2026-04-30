@@ -16,6 +16,15 @@
 #define STARTING_TEXT_LINES 8
 #define STARTING_LINE_LEN 32
 
+// Terminal key comb. (signals) and their corresponding ASCII unprintable control codes
+#define CTRL_S 19
+#define CTRL_O 15
+#define CTRL_Q 17
+#define CTRL_N 14
+#define CTRL_T 20
+#define KEY_ENTER 13  // CR
+#define KEY_BACKSPACE 127  // DEL
+
 static struct termios original_termios;
 int tty_fd;
 
@@ -26,7 +35,7 @@ struct editor_state{
     int line_count;
     int line_number;
     int char_number;
-    int upper_screen_bond;
+    int upper_screen_bound;
     char c;
     char prev_c;
     char is_CSI;
@@ -402,31 +411,96 @@ int save_file_logic(struct editor_state *e){
     return 0;
 }
 
+int arrow_key_handling(struct editor_state *e){
+
+    switch(e->c){ // Arrow keys
+
+        case 'A': // Arrow Up
+
+            if(e->line_number <= 0){
+                ;
+            }else{
+                e->line_number -= 1;
+                e->char_number = 0;
+            }
+
+            break;
+
+        case 'B': // Arrow Down
+
+            int are_lines_empty = 1; 
+            for(int i = e->line_number + 1; i < e->line_count; i++){
+                //Checking if all the proceeding lines are empty.
+                //if that's the case prevent from descending down.
+                if(e->text_lines[i][0] != '\0'){
+                    are_lines_empty = 0;
+                    break;
+                }
+            }
+            if(are_lines_empty){
+                break;
+            }
+            if(e->line_number + 1 >= e->line_count){
+                ;
+            }else{
+                e->line_number += 1;
+                e->char_number = 0;
+            }
+
+            break;
+
+        case 'C': // Arrow Right
+
+            // ALLOW FOR CURSOR TO BE AT THE END OF FILE
+            if(e->char_number + 1 >= e->allocated_char_counts[e->line_number] || e->text_lines[e->line_number][e->char_number] == '\0'){
+                ;
+            }else{
+                e->char_number += 1;
+            }
+
+            break;
+
+        case 'D': // Arrow Left
+
+            if(e->char_number <= 0){
+                ;
+            }else{
+                e->char_number -= 1;
+            }
+
+            break;
+
+    }
+
+    return 0;
+
+}
+
 //                                                  v lite mode is used for key handling in options like: setting file name to save it etc. text areas 
 int key_handling(struct editor_state *e, int lite_mode_flag){
 
-    if(lite_mode_flag == 0){ //if lite mode isn't present handle all the special characters as well.
+    if(lite_mode_flag == 0){ // If lite mode isn't present handle all the special characters as well.
 
-        if (e->c == 19) { // CTRL + S (saves to a file)
+        if (e->c == CTRL_S) { // Saves to a file
 
             save_file_logic(e);
             return 0;
 
-        }else if (e->c == 15) { // CTRL + O (opens a file)
+        }else if (e->c == CTRL_O) { // Opens a file
 
             open_file_logic(e);
             return 0;
 
-        }else if (e->c == 17) { // CTRL + Q (quits program)
+        }else if (e->c == CTRL_Q) { // Quits program
 
             return -1; // Quit program
 
-        }else if (e->c == 14) { // CTRL + N (Opens new file)
+        }else if (e->c == CTRL_N) { // Opens new file
 
             open_new_file_logic(e);
             return 0;
 
-        }else if (e->c == 13 /*CR*/) { // "return" handling
+        }else if (e->c == KEY_ENTER) { // <- CR "return" handling
 
             // Adding (allocating more) lines to text_lines line array in case it's needed.
             if(e->line_number >= e->line_count-1){// Safety measurements
@@ -447,7 +521,7 @@ int key_handling(struct editor_state *e, int lite_mode_flag){
 
     }
 
-    if (e->c == 127 /*DEL*/) { // <- DEL ("backspace") handling
+    if (e->c == KEY_BACKSPACE) { // <- DEL ("backspace") handling
 
         if(e->char_number < e->actual_char_counts[e->line_number]){
 
@@ -477,69 +551,25 @@ int key_handling(struct editor_state *e, int lite_mode_flag){
             ;
         }else{
             e->char_number -= 1;
-            (e->actual_char_counts)[e->line_number] -= 1;
+            e->actual_char_counts[e->line_number] -= 1;
         }
 
         return 0;
 
-    }else if(e->c == 20){ // CTRL + T (changes between insert and overtype modes)
+    }else if(e->c == CTRL_T){ // Switches between insert and overtype modes
 
         overtype_mode = overtype_mode ^ 1;
         input_mode_change_flag = 1;
         return 0;
 
-    }else if(e->c == 91 /*[*/ && e->prev_c == 27 /*ESC*/){ // Checking for CSI (Control Sequence Introducer)
+    }else if(e->c == 91 /*[*/ && e->prev_c == '\e' /*ESC*/){ // Checking for CSI (Control Sequence Introducer)
 
         e->is_CSI = 1;
         return 0;
 
-    }else if(e->is_CSI){
+    }else if(e->is_CSI){ // Control Sequence Introduced
 
-        switch(e->c){ // Arrow keys
-            case 65 /*A*/: // Arrow Up
-                if(e->line_number <= 0){
-                    ;
-                }else{
-                    e->line_number -= 1;
-                    e->char_number = 0;
-                }
-                break;
-            case 66 /*B*/: // Arrow Down
-                int are_lines_empty = 1; 
-                for(int i = e->line_number + 1; i < e->line_count; i++){
-                    //Checking if all the proceeding lines are empty.
-                    //if that's the case prevent from descending down.
-                    if(e->text_lines[i][0] != '\0'){
-                        are_lines_empty = 0;
-                        break;
-                    }
-                }
-                if(are_lines_empty){
-                    break;
-                }
-                if(e->line_number + 1 >= e->line_count){
-                    ;
-                }else{
-                    e->line_number += 1;
-                    e->char_number = 0;
-                }
-                break;
-            case 67 /*C*/: // Arrow Right
-		        // ALLOW FOR CURSOR TO BE AT THE END OF FILE
-                if(e->char_number + 1 >= e->allocated_char_counts[e->line_number] || e->text_lines[e->line_number][e->char_number] == '\0'){
-                    ;
-                }else{
-                    e->char_number += 1;
-                }
-                break;
-            case 68 /*D*/: // Arrow Left
-                if(e->char_number <= 0){
-                    ;
-                }else{
-                    e->char_number -= 1;
-                }
-                break;
-        }
+        arrow_key_handling(e);
 
         e->is_CSI = 0;
         return 0;
@@ -554,10 +584,10 @@ int key_handling(struct editor_state *e, int lite_mode_flag){
             e->text_lines[e->line_number][i] = e->text_lines[e->line_number][i-1];
         }
     }
+    
     e->text_lines[e->line_number][e->char_number] = e->c; // assigning new char
 
-    //We need to do both!!! Increase size (add more chars) and change the value for it
-    if((e->actual_char_counts)[e->line_number] >= (e->allocated_char_counts)[e->line_number] - 1){// Safety measurements
+    if(e->actual_char_counts[e->line_number] >= e->allocated_char_counts[e->line_number] - 1){// Safety measurements
         
         grow_curr_line_len(e);
 
@@ -631,13 +661,13 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
         int screen_scrolled = 0; 
 
         //Printing proper editor's main text:
-        if(e->upper_screen_bond == e->line_number){
+        if(e->upper_screen_bound == e->line_number){
             if(e->line_number != 0){
-                e->upper_screen_bond -= 1;
+                e->upper_screen_bound -= 1;
                 screen_scrolled = 1;
             }
-        }else if(e->line_number - e->upper_screen_bond > ws->ws_row-3){
-            e->upper_screen_bond += 1;
+        }else if(e->line_number - e->upper_screen_bound > ws->ws_row-3){
+            e->upper_screen_bound += 1;
             screen_scrolled = 1;
         }
         
@@ -645,21 +675,21 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
 
             printf(REFRESH_ABOVE_STATUS_BAR);
 
-            int limit = e->line_count - e->upper_screen_bond;
+            int limit = e->line_count - e->upper_screen_bound;
             if(limit > ws->ws_row-2)
                 limit = ws->ws_row-2;
-            for(int i = e->upper_screen_bond; i < e->upper_screen_bond+limit; i++)
+            for(int i = e->upper_screen_bound; i < e->upper_screen_bound+limit; i++)
                 printf("%s\r\n", e->text_lines[i]);
 
             screen_scrolled = 0;
             return_to_editor_screen = 0;
 
         }else{
-            printf("\e[%d;1H", e->line_number - e->upper_screen_bond + 1);
+            printf("\e[%d;1H", e->line_number - e->upper_screen_bound + 1);
             printf(REFRESH_ENTIRE_LINE);
             printf("%s", e->text_lines[e->line_number]);
             //v Make it work later !
-            /*printf("\e[%d;%dH", line_number - *upper_screen_bond + 1, char_number + 1);
+            /*printf("\e[%d;%dH", line_number - *upper_screen_bound + 1, char_number + 1);
             printf(REFRESH_TIL_LINE_END);
             for(int i = char_number; i < actual_char_counts[line_number]; i++){
                 putchar(text_lines[line_number][i]);
@@ -669,7 +699,7 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
         // Place cursor at appropriate line/column
         //printf("\e[%d;%dH", line_number + 1, char_number + 1); // Name or macro it in more sensible way later
         // More relative/dynamic version of the above:
-        printf("\e[%d;%dH", e->line_number - e->upper_screen_bond + 1, e->char_number + 1);
+        printf("\e[%d;%dH", e->line_number - e->upper_screen_bound + 1, e->char_number + 1);
 
         printf(SHOW_CURSOR);
     }
@@ -738,7 +768,7 @@ int main(void) {
     //Is true (1), when control sequence introducer was present i.e: characters: '\e' followed by: '[' and then control sequence.
     
     // First (upper-most) line that is visible on the editor's screen/window.
-    e->upper_screen_bond = 0;
+    e->upper_screen_bound = 0;
 
     while (1) {
 
