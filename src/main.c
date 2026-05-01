@@ -43,7 +43,7 @@ struct editor_state{
     char is_CSI;
 };
 
-int key_handling(struct editor_state *e, int lite_mode_flag);
+int key_handling(struct winsize *ws, struct editor_state *e, int lite_mode_flag);
 
 int open_new_file_logic(struct editor_state *e);
 int open_file_logic(struct editor_state *e);
@@ -58,6 +58,7 @@ int overtype_mode = 0;
 int input_mode_change_flag = 0; //typing mode (insert/overtype) change information flag
 int has_line_changed = 0; // Checks in case currently pointed at text line changed.
 int return_to_editor_screen = 0; // Checks if user returned to editor from different prompt/screen (because it needs additional refresh then).
+int screen_scrolled_flag = 0; // Checks if screen has scrolled and if yes, refreshes whole editor's text space and prints whole text again
 
 void disable_raw_mode() {
     if (tcsetattr(tty_fd, TCSAFLUSH, &original_termios) == -1) {
@@ -177,7 +178,7 @@ int input_file_name_logic(struct editor_state *e){
     printf(SAVE_CURSOR_POS);
     while(1){
         if (read(tty_fd, &(e_temp.c), 1) == 1) {
-            key_handling(&e_temp, 1);
+            key_handling((struct winsize *)NULL, &e_temp, 1);
             e_temp.prev_c = e_temp.c;
             printf(REFRESH_ENTIRE_LINE); // Can make it more effecting by refreshing only part of the line later.
             printf(RESTORE_CURSOR_POS);
@@ -213,7 +214,7 @@ int open_new_file_logic(struct editor_state *e){
     printf("Are you sure you wanna open new file? This will delete all unsaved progress on current file [Y/n]");
     while(1){
         if(read(tty_fd, &temp_c, 1) == 1){
-            if(temp_c == 'Y' || temp_c == 'y' || temp_c == '\r'){
+            if(temp_c == 'Y' || temp_c == 'y' || temp_c == KEY_ENTER){
                 
                 free_text_mem(e);
 
@@ -419,16 +420,20 @@ int save_file_logic(struct editor_state *e){
     return 0;
 }
 
-int arrow_key_handling(struct editor_state *e){
+int arrow_key_handling(struct winsize *ws, struct editor_state *e, int lite_mode_flag){
 
     switch(e->c){ // Arrow keys
 
         case 'A': // Arrow Up
 
-            if(e->line_number <= 0){
+            if(e->line_number <= 0 || lite_mode_flag){
                 ;
             }else{
                 e->line_number -= 1;
+                if(e->line_number < e->upper_screen_bound){
+                    screen_scrolled_flag = 1;
+                    e->upper_screen_bound -= 1;
+                }
                 e->char_number = 0;
             }
 
@@ -436,10 +441,14 @@ int arrow_key_handling(struct editor_state *e){
 
         case 'B': // Arrow Down    
 
-            if(e->line_number + 1 > e->actual_last_line){
+            if(e->line_number + 1 > e->actual_last_line || lite_mode_flag){
                 ;
             }else{
                 e->line_number += 1;
+                if(e->line_number - e->upper_screen_bound > ws->ws_row-3){
+                    screen_scrolled_flag = 1;
+                    e->upper_screen_bound += 1;
+                }
                 e->char_number = 0;
             }
 
@@ -473,7 +482,7 @@ int arrow_key_handling(struct editor_state *e){
 }
 
 //                                                  v lite mode is used for key handling in options like: setting file name to save it etc. text areas 
-int key_handling(struct editor_state *e, int lite_mode_flag){
+int key_handling(struct winsize *ws, struct editor_state *e, int lite_mode_flag){
 
     if(lite_mode_flag == 0){ // If lite mode isn't present handle all the special characters as well.
 
@@ -508,6 +517,10 @@ int key_handling(struct editor_state *e, int lite_mode_flag){
             e->line_number += 1;
             if(e->line_number > e->actual_last_line)
                 e->actual_last_line = e->line_number;
+            if(e->line_number - e->upper_screen_bound > ws->ws_row-3){
+                screen_scrolled_flag = 1;
+                e->upper_screen_bound += 1;
+            }
             has_line_changed = 1;
             e->char_number = 0;
 
@@ -571,7 +584,7 @@ int key_handling(struct editor_state *e, int lite_mode_flag){
 
     }else if(e->is_CSI){ // Control Sequence Introduced
 
-        arrow_key_handling(e);
+        arrow_key_handling(ws, e, lite_mode_flag);
 
         e->is_CSI = 0;
         return 0;
@@ -666,21 +679,8 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
             window_resized = 0;
         }
 
-        // Checks if screen has scrolled and if yes, refreshes whole editor's text space and prints whole text again
-        int screen_scrolled = 0; 
-
         //Printing proper editor's main text:
-        if(e->upper_screen_bound == e->line_number){
-            if(e->line_number != 0){
-                e->upper_screen_bound -= 1;
-                screen_scrolled = 1;
-            }
-        }else if(e->line_number - e->upper_screen_bound > ws->ws_row-3){
-            e->upper_screen_bound += 1;
-            screen_scrolled = 1;
-        }
-        
-        if(screen_scrolled || has_line_changed || return_to_editor_screen){
+        if(screen_scrolled_flag || has_line_changed || return_to_editor_screen){
 
             printf(REFRESH_ABOVE_STATUS_BAR);
 
@@ -690,7 +690,7 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
             for(int i = e->upper_screen_bound; i < e->upper_screen_bound+limit; i++)
                 printf("%s\r\n", e->text_lines[i]);
 
-            screen_scrolled = 0;
+            screen_scrolled_flag = 0;
             return_to_editor_screen = 0;
             has_line_changed = 0;
 
@@ -788,7 +788,7 @@ int main(void) {
 
             }else{
 
-                if(key_handling(e, 0) == -1) // Normally doesn't return -1, so if that's the case then:
+                if(key_handling(ws, e, 0) == -1) // Normally doesn't return -1, so if that's the case then:
                     break; //Exits the program
                 
                 e->prev_c = e->c;
