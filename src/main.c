@@ -32,14 +32,15 @@ struct editor_state{
     char **text_lines;
     int *allocated_char_counts;
     int *actual_char_counts;
-    int line_count;
+    char curr_path[MAX_PATH_LEN];
+    int allocated_line_count;
+    int actual_last_line;
     int line_number;
     int char_number;
     int upper_screen_bound;
     char c;
     char prev_c;
     char is_CSI;
-    char curr_path[MAX_PATH_LEN];
 };
 
 int key_handling(struct editor_state *e, int lite_mode_flag);
@@ -165,12 +166,13 @@ int input_file_name_logic(struct editor_state *e){
     e_temp.is_CSI = 0;
     e_temp.char_number = 0;
     e_temp.line_number = 0;
-    e_temp.line_count = 1;
-    e_temp.allocated_char_counts = calloc(e_temp.line_count, sizeof(int));
+    e_temp.actual_last_line = 0;
+    e_temp.allocated_line_count = 1;
+    e_temp.allocated_char_counts = calloc(e_temp.allocated_line_count, sizeof(int));
     e_temp.allocated_char_counts[0] = STARTING_LINE_LEN;
-    e_temp.actual_char_counts = calloc(e_temp.line_count, sizeof(int));
+    e_temp.actual_char_counts = calloc(e_temp.allocated_line_count, sizeof(int));
     e_temp.actual_char_counts[0] = 0;
-    e_temp.text_lines = calloc(e_temp.line_count, sizeof(char*)); //has only 1 line (and is handled as such), but made as char** for compatibility with key_handling() function.
+    e_temp.text_lines = calloc(e_temp.allocated_line_count, sizeof(char*)); //has only 1 line (and is handled as such), but made as char** for compatibility with key_handling() function.
     e_temp.text_lines[0] = calloc(STARTING_LINE_LEN, sizeof(char));
     printf(SAVE_CURSOR_POS);
     while(1){
@@ -215,15 +217,15 @@ int open_new_file_logic(struct editor_state *e){
                 
                 free_text_mem(e);
 
-                e->line_count = STARTING_TEXT_LINES;
-
+                e->allocated_line_count = STARTING_TEXT_LINES;
                 alloc_mem_for_text(e);
                 
                 e->line_number = 0;
                 e->char_number = 0;
+                e->actual_last_line = 0;
                 e->upper_screen_bound = 0;
-                e->line_count = STARTING_TEXT_LINES;
-                //line_count being cached as zero'ed and allocated later faster would be nice (instead of freeing them and mallocing them later)
+                e->allocated_line_count = STARTING_TEXT_LINES;
+                //allocated_line_count being cached as zero'ed and allocated later faster would be nice (instead of freeing them and mallocing them later)
                 strcpy(e->curr_path, "");
                 break;
             }else if(temp_c == 'n'){
@@ -238,9 +240,9 @@ int open_new_file_logic(struct editor_state *e){
 // Reallocs memory for text_lines, allocated char_counts and actual_char_counts
 int grow_line_count(struct editor_state *e){
 
-    char **extended_text_lines = realloc(e->text_lines, e->line_count * 2 * sizeof(char*));
-    int *extended_allocated_char_counts = realloc(e->allocated_char_counts, e->line_count * 2 * sizeof(int));
-    int *extended_actual_char_counts = realloc(e->actual_char_counts, e->line_count * 2 * sizeof(int));
+    char **extended_text_lines = realloc(e->text_lines, e->allocated_line_count * 2 * sizeof(char*));
+    int *extended_allocated_char_counts = realloc(e->allocated_char_counts, e->allocated_line_count * 2 * sizeof(int));
+    int *extended_actual_char_counts = realloc(e->actual_char_counts, e->allocated_line_count * 2 * sizeof(int));
     if (extended_text_lines == NULL){ // Safety measurements
         perror("unable to perform realloc for extended_text_lines!");
         exit(1);
@@ -256,13 +258,13 @@ int grow_line_count(struct editor_state *e){
         e->text_lines = extended_text_lines; // New char** pointer appended with new few lines (multiplying current number of lines by 2)
         e->allocated_char_counts = extended_allocated_char_counts;
         e->actual_char_counts = extended_actual_char_counts;
-        for(int i = e->line_count; i < e->line_count * 2; i++){
+        for(int i = e->allocated_line_count; i < e->allocated_line_count * 2; i++){
             e->text_lines[i] = calloc(STARTING_LINE_LEN, sizeof(char));
             e->allocated_char_counts[i] = STARTING_LINE_LEN;
             e->actual_char_counts[i] = 0;
         }
 
-        e->line_count *= 2;
+        e->allocated_line_count *= 2;
     }
 
     return 0;
@@ -304,7 +306,7 @@ int open_file_logic(struct editor_state *e){
 
     free_text_mem(e);
 
-    e->line_count = STARTING_TEXT_LINES;
+    e->allocated_line_count = STARTING_TEXT_LINES;
     alloc_mem_for_text(e);
 
     char buffer[BUFFER_LEN]; //Make it safer later!!!!!
@@ -312,7 +314,9 @@ int open_file_logic(struct editor_state *e){
 
     e->char_number = 0;
     e->line_number = 0;
+    e->actual_last_line = e->line_number;
     e->actual_char_counts[e->line_number] = 0;
+    e->upper_screen_bound = 0;
 
     while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
 
@@ -321,12 +325,12 @@ int open_file_logic(struct editor_state *e){
 
             // New line
             if (c == '\n') {
-                e->text_lines[e->line_number][e->char_number] = '\0';
-                e->line_number += 1;
+                e->text_lines[e->actual_last_line][e->char_number] = '\0';
+                e->actual_last_line += 1;
                 e->char_number = 0;
-                e->actual_char_counts[e->line_number] = 0;
+                e->actual_char_counts[e->actual_last_line] = 0;
 
-                if(e->line_number >= e->line_count - 1){
+                if(e->actual_last_line >= e->allocated_line_count - 1){
 
                     grow_line_count(e);
 
@@ -335,21 +339,21 @@ int open_file_logic(struct editor_state *e){
             }else{
 
                 // grow line if needed
-                if (e->char_number >= e->allocated_char_counts[e->line_number] - 1) {
+                if (e->char_number >= e->allocated_char_counts[e->actual_last_line] - 1) {
 
                     grow_curr_line_len(e);
                 }
 
                 // Add char to current line
-                e->text_lines[e->line_number][e->char_number] = c;
+                e->text_lines[e->actual_last_line][e->char_number] = c;
                 e->char_number += 1;
-                e->actual_char_counts[e->line_number] += 1;
+                e->actual_char_counts[e->actual_last_line] += 1;
             }
         }
     }
 
     // null-terminate last line
-    e->text_lines[e->line_number][e->char_number] = '\0';
+    e->text_lines[e->actual_last_line][e->char_number] = '\0';
 
     close(fd);
     file_opened_flag = 1;
@@ -375,7 +379,7 @@ int save_file_logic(struct editor_state *e){
 
     int max_line_length = 1;
 
-    for(int i = 0; i < e->line_count; i++){
+    for(int i = 0; i < e->actual_last_line; i++){
         if(e->allocated_char_counts[i] > max_line_length)
             max_line_length = e->allocated_char_counts[i];
     }
@@ -384,7 +388,7 @@ int save_file_logic(struct editor_state *e){
 
     ssize_t bytes_written = 0;
 
-    for(int i = 0; i < e->line_count; i++){
+    for(int i = 0; i < e->actual_last_line; i++){
 
         size_t len = strlen(e->text_lines[i]);
 
@@ -397,11 +401,12 @@ int save_file_logic(struct editor_state *e){
             perror("write");
             close(fd);
             return -1;
-        }
-        if (bytes_written != strlen(buffer)) {
+
+        }else if (bytes_written != strlen(buffer)) {
             fprintf(stderr, "Partial write!\n");
             close(fd);
             return -1;
+
         }
 
     }
@@ -427,21 +432,9 @@ int arrow_key_handling(struct editor_state *e){
 
             break;
 
-        case 'B': // Arrow Down
+        case 'B': // Arrow Down    
 
-            int are_lines_empty = 1; 
-            for(int i = e->line_number + 1; i < e->line_count; i++){
-                //Checking if all the proceeding lines are empty.
-                //if that's the case prevent from descending down.
-                if(e->text_lines[i][0] != '\0'){
-                    are_lines_empty = 0;
-                    break;
-                }
-            }
-            if(are_lines_empty){
-                break;
-            }
-            if(e->line_number + 1 >= e->line_count){
+            if(e->line_number + 1 > e->actual_last_line){
                 ;
             }else{
                 e->line_number += 1;
@@ -452,7 +445,7 @@ int arrow_key_handling(struct editor_state *e){
 
         case 'C': // Arrow Right
 
-            // ALLOW FOR CURSOR TO BE AT THE END OF FILE
+            // ALLOW FOR CURSOR TO BE AT THE END OF FILE (LINE)
             if(e->char_number + 1 >= e->allocated_char_counts[e->line_number] || e->text_lines[e->line_number][e->char_number] == '\0'){
                 ;
             }else{
@@ -504,13 +497,15 @@ int key_handling(struct editor_state *e, int lite_mode_flag){
         }else if (e->c == KEY_ENTER) { // <- CR "return" handling
 
             // Adding (allocating more) lines to text_lines line array in case it's needed.
-            if(e->line_number >= e->line_count-1){// Safety measurements
+            if(e->actual_last_line >= e->allocated_line_count-1){// Safety measurements
                 
                 grow_line_count(e);
 
             }
 
             e->line_number += 1;
+            if(e->line_number > e->actual_last_line)
+                e->actual_last_line = e->line_number;
             has_line_changed = 1;
             e->char_number = 0;
 
@@ -545,9 +540,13 @@ int key_handling(struct editor_state *e, int lite_mode_flag){
         e->text_lines[e->line_number][e->char_number - 1] = '\0';
 
         if(e->char_number == 0 && e->line_number > 0){
+
+            if(e->line_number == e->actual_last_line)
+                e->actual_last_line -= 1;
             e->line_number -= 1;
             has_line_changed = 1;
             e->char_number = strlen(e->text_lines[e->line_number]);
+
         }else if(e->char_number == 0 && e->line_number == 0){
             ;
         }else{
@@ -661,7 +660,7 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
         // Checks if screen has scrolled and if yes, refreshes whole editor's text space and prints whole text again
         int screen_scrolled = 0; 
 
-        //Printing proper editor's main text:
+        //Printing proper editor's main text: // !!! Return to this later
         if(e->upper_screen_bound == e->line_number){
             if(e->line_number != 0){
                 e->upper_screen_bound -= 1;
@@ -676,7 +675,7 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
 
             printf(REFRESH_ABOVE_STATUS_BAR);
 
-            int limit = e->line_count - e->upper_screen_bound;
+            int limit = e->actual_last_line - e->upper_screen_bound;
             if(limit > ws->ws_row-2)
                 limit = ws->ws_row-2;
             for(int i = e->upper_screen_bound; i < e->upper_screen_bound+limit; i++)
@@ -686,7 +685,7 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
             return_to_editor_screen = 0;
 
         }else{
-            printf("\e[%d;1H", e->line_number - e->upper_screen_bound + 1);
+            CURSOR_MOVE_ROW(e->line_number - e->upper_screen_bound + 1);
             printf(REFRESH_ENTIRE_LINE);
             printf("%s", e->text_lines[e->line_number]);
             //v Make it work later !
@@ -698,9 +697,7 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
         }
 
         // Place cursor at appropriate line/column
-        //printf("\e[%d;%dH", line_number + 1, char_number + 1); // Name or macro it in more sensible way later
-        // More relative/dynamic version of the above:
-        printf("\e[%d;%dH", e->line_number - e->upper_screen_bound + 1, e->char_number + 1);
+        CURSOR_MOVE_POS(e->line_number - e->upper_screen_bound + 1, e->char_number + 1);
 
         printf(SHOW_CURSOR);
     }
@@ -711,15 +708,15 @@ int print_logic(struct winsize *ws, struct editor_state *e){ // The editor's mai
 // Allocates and initialized memory for text data.
 int alloc_mem_for_text(struct editor_state *e){ 
 
-    e->text_lines = malloc(e->line_count * sizeof(char*));
-    e->allocated_char_counts = malloc(e->line_count * sizeof(int)); // dynamic table of memory allocated for number of space allocated for characters in text lines.
-    e->actual_char_counts = malloc(e->line_count * sizeof(int)); // dynamic table of memory allocated for actual number of characters in text lines.
+    e->text_lines = malloc(e->allocated_line_count * sizeof(char*));
+    e->allocated_char_counts = malloc(e->allocated_line_count * sizeof(int)); // dynamic table of memory allocated for number of space allocated for characters in text lines.
+    e->actual_char_counts = malloc(e->allocated_line_count * sizeof(int)); // dynamic table of memory allocated for actual number of characters in text lines.
     // Think whether the data structure wouldn't be a better idea later
     if (!(e->text_lines) || !(e->allocated_char_counts) || !(e->actual_char_counts)) {
         perror("malloc failed");
         return -1;
     }
-    for(int i = 0; i < e->line_count; i++){
+    for(int i = 0; i < e->allocated_line_count; i++){
         e->text_lines[i] = calloc(STARTING_LINE_LEN, sizeof(char)); //do check for calloc later.
         e->allocated_char_counts[i] = STARTING_LINE_LEN;
         e->actual_char_counts[i] = 0;
@@ -731,7 +728,7 @@ int alloc_mem_for_text(struct editor_state *e){
 int free_text_mem(struct editor_state *e){
 
     // Freeing text_lines container contents
-    for(int i = 0; i < e->line_count; i++){
+    for(int i = 0; i < e->allocated_line_count; i++){
         free(e->text_lines[i]);
     }
     free(e->text_lines);
@@ -753,9 +750,10 @@ int main(void) {
 
     struct editor_state *e = malloc(sizeof(struct editor_state));
 
-    e->line_count = STARTING_TEXT_LINES;
+    e->allocated_line_count = STARTING_TEXT_LINES;
     e->line_number = 0;
     e->char_number = 0;
+    e->actual_last_line = 0; // Stores number of that actual (not allocated but present) line.
 
     alloc_mem_for_text(e);
 

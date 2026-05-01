@@ -18,6 +18,7 @@
 #define SAVE_CURSOR_POS "\e7"
 #define RESTORE_CURSOR_POS "\e8"
 #define CURSOR_MOVE_ROW(row) printf("\e[%d;1H", (row))
+#define CURSOR_MOVE_POS(row, col) printf("\e[%d;%dH", (row), (col))
 
 // Defines below print help/"tutorial" info on the status bar (bottom of the screen)
 
